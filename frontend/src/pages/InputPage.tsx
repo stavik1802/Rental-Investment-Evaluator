@@ -1,8 +1,8 @@
 // src/pages/InputPage.tsx
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { SearchParams, EvaluationResponse } from "../types";
-import { evaluateInvestment } from "../api";
+import type { SearchParams } from "../types";
+import { estimateRent } from "../api";
 
 const defaultValues: SearchParams = {
   minPrice: 200000,
@@ -57,16 +57,21 @@ function InputPage() {
     try {
       setIsLoading(true);
 
-      // 🔗 REAL BACKEND CALL HERE
-      const result: EvaluationResponse = await evaluateInvestment(form);
+      // 1️⃣ First: get average rent quickly
+      const rentResult = await estimateRent(form);
 
-      // Navigate to results page with response from backend
+      // 2️⃣ Navigate to results, passing search + avg rent
       navigate("/results", {
-        state: { searchParams: form, results: result },
+        state: {
+          searchParams: form,
+          initialAverageRent: rentResult.averageRent,
+        },
       });
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Something went wrong while contacting backend.");
+      setError(
+        err?.message || "Something went wrong while contacting backend."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -83,7 +88,7 @@ function InputPage() {
 
       <div className="chip-row">
         <span className="chip">Step 1 · Input Criteria</span>
-        <span className="chip">Step 2 · View Rent Estimate</span>
+        <span className="chip">Step 2 · View Rent & Properties</span>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">

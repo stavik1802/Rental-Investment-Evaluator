@@ -1,16 +1,29 @@
 // src/pages/ResultsPage.tsx
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import type { EvaluationResponse, SearchParams } from "../types";
+import type {
+  EvaluationResponse,
+  SearchParams,
+  PropertyResult,
+} from "../types";
+import { evaluateInvestment } from "../api";
 
 interface LocationState {
   searchParams: SearchParams;
-  results: EvaluationResponse;
+  initialAverageRent: number;
 }
 
 function ResultsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as LocationState | null;
+
+  const [averageRent, setAverageRent] = useState<number | null>(
+    state?.initialAverageRent ?? null
+  );
+  const [properties, setProperties] = useState<PropertyResult[]>([]);
+  const [isPropertiesLoading, setIsPropertiesLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!state) {
     return (
@@ -27,11 +40,49 @@ function ResultsPage() {
     );
   }
 
-  const { searchParams, results } = state;
+  const { searchParams } = state;
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadFullEvaluation() {
+      try {
+        setIsPropertiesLoading(true);
+        setError(null);
+
+        const fullResult: EvaluationResponse = await evaluateInvestment(
+          searchParams
+        );
+
+        if (isCancelled) return;
+
+        setProperties(fullResult.properties || []);
+        setAverageRent(fullResult.averageRent);
+      } catch (err: any) {
+        console.error(err);
+        if (!isCancelled) {
+          setError(
+            err?.message ||
+              "Something went wrong while loading sample properties."
+          );
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsPropertiesLoading(false);
+        }
+      }
+    }
+
+    loadFullEvaluation();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [searchParams]);
 
   const bestProperty =
-    results.properties.length > 0
-      ? [...results.properties].sort((a, b) => b.grossYield - a.grossYield)[0]
+    properties.length > 0
+      ? [...properties].sort((a, b) => b.grossYield - a.grossYield)[0]
       : null;
 
   return (
@@ -41,10 +92,11 @@ function ResultsPage() {
           ← Back
         </button>
         <h1 className="card-title" style={{ marginTop: 8 }}>
-          Rent Estimate Preview
+          Rent & Yield Estimate
         </h1>
         <p className="card-subtitle">
-          This is a mocked preview. Later it will use your LLM-backed backend.
+          Average rent appears first. Sample properties and yields load
+          afterwards.
         </p>
       </header>
 
@@ -52,18 +104,24 @@ function ResultsPage() {
         <div>
           <div className="summary-label">Estimated average monthly rent</div>
           <div className="summary-value">
-            ${results.averageRent.toLocaleString()}
+            {averageRent !== null ? (
+              <>${averageRent.toLocaleString()}</>
+            ) : (
+              <span>Loading rent estimate…</span>
+            )}
           </div>
         </div>
         <div>
           <div className="summary-pill">
-            {results.properties.length} sample properties
+            {isPropertiesLoading
+              ? "Loading sample properties…"
+              : `${properties.length} sample properties`}
           </div>
         </div>
       </div>
 
       <div className="results-grid">
-        {/* Left: search summary */}
+        {/* Left: search summary + best property */}
         <section className="results-section">
           <h3>Search criteria</h3>
           <div className="results-tags">
@@ -86,7 +144,7 @@ function ResultsPage() {
 
           {bestProperty && (
             <>
-              <h3 style={{ marginTop: 12 }}>Best mock candidate</h3>
+              <h3 style={{ marginTop: 12 }}>Top yield candidate</h3>
               <div className="results-tags">
                 <div>
                   <strong>{bestProperty.address}</strong>
@@ -100,20 +158,73 @@ function ResultsPage() {
                   {bestProperty.estimatedRent.toLocaleString()} · Gross yield:{" "}
                   {(bestProperty.grossYield * 100).toFixed(2)}%
                 </div>
+                {bestProperty.url && (
+                  <div>
+                    Listing:{" "}
+                    <a
+                      href={bestProperty.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View on site
+                    </a>
+                  </div>
+                )}
               </div>
             </>
           )}
         </section>
 
-        {/* Right: “raw data” preview */}
+        {/* Right: properties table */}
         <section className="results-section">
-          <h3>Raw data preview</h3>
-          <p className="results-tags">
-            This is what the backend will send to the frontend later.
-          </p>
-          <pre className="code-block">
-{JSON.stringify(results, null, 2)}
-          </pre>
+          <h3>Sample properties</h3>
+
+          {error && <div className="error-box">{error}</div>}
+
+          {isPropertiesLoading && !properties.length && (
+            <p>Loading properties from Perplexity + OpenAI…</p>
+          )}
+
+          {!isPropertiesLoading && properties.length === 0 && !error && (
+            <p>No sample properties found for this search.</p>
+          )}
+
+          {properties.length > 0 && (
+            <div className="table-wrapper">
+              <table className="results-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Location</th>
+                    <th>Listing</th>
+                    <th>Price</th>
+                    <th>Est. Rent</th>
+                    <th>Gross Yield</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {properties.map((p, idx) => (
+                    <tr key={p.id || idx}>
+                      <td>{idx + 1}</td>
+                      <td>{p.address}</td>
+                      <td>
+                        {p.url ? (
+                          <a href={p.url} target="_blank" rel="noreferrer">
+                            Open listing
+                          </a>
+                        ) : (
+                          <span>—</span>
+                        )}
+                      </td>
+                      <td>${p.price.toLocaleString()}</td>
+                      <td>${p.estimatedRent.toLocaleString()}</td>
+                      <td>{(p.grossYield * 100).toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </div>
